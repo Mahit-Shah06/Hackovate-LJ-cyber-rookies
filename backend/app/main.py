@@ -45,12 +45,11 @@ def create_user(user_in: schemas.UserCreate, user_crud: crud.UserCRUD = Depends(
     user = user_crud.create_user(
         uuid=user_uuid,
         username=user_in.username,
-        hashed_password=hashed_pw.decode("utf-8"),
+        hashed_password=hashed_pw,
         role=user_in.role,
         salt=salt
     )
     return user
-
 
 @app.post("/token", response_model=schemas.Token)
 def login_for_access_token(
@@ -61,7 +60,7 @@ def login_for_access_token(
     if not user:
         raise HTTPException(status_code=400, detail="Incorrect username or password")
 
-    stored_hash_bytes = user.hashed_password.encode("utf-8")
+    stored_hash_bytes = user.hashed_password
     if not encryption.verify_password(form_data.password, stored_hash_bytes):
         raise HTTPException(status_code=400, detail="Incorrect username or password")
 

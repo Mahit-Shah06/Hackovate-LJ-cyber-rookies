@@ -21,7 +21,7 @@ class User(Base):
 
     uuid = Column(String, primary_key=True, index=True)
     username = Column(String, unique=True, index=True)
-    hashed_password = Column(String)   # Will hash later
+    hashed_password = Column(LargeBinary)
     role = Column(String)       # HR, Finance, etc.
     created_at = Column(DateTime, default=datetime.utcnow)
     salt = Column(LargeBinary)

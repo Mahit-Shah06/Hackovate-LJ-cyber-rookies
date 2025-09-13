@@ -26,7 +26,7 @@ class DocsCRUD():
         return self.db.query(models.Document).filter(models.Document.docid == doc_id).first()
 
     def fetch_docs_by_user_id(self, user_uuid: str):
-        return self.db.query(models.Document).filter(models.Document.user_uuid == user_uuid).all()
+        return self.db.query(models.Document).filter(models.Document.uuid == user_uuid).all()
 
     def delete_doc(self, doc_id: int):
         doc = self.fetch_doc_by_doc_id(doc_id)
@@ -40,7 +40,7 @@ class UserCRUD:
     def __init__(self, db: Session):
         self.db = db
 
-    def create_user(self, uuid: str, username: str, hashed_password: str, role: str, salt: bytes):
+    def create_user(self, uuid: str, username: str, hashed_password: bytes, role: str, salt: bytes):
         user = models.User(
             uuid=uuid,
             username=username,
