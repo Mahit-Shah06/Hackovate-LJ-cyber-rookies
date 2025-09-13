@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI-Powered Document Classification and Intelligent Indexing
+</title>
+  <link rel="stylesheet" href="Front.css">
+</head>
+
+<body>
+  <!-- Login Page -->
+  <div id="loginPage" class="auth-container">
+    <div class="auth-card">
+      <div class="logo">
+        <h1>Login</h1>
+        <p>AI-Powered Document Classifer</p>
+      </div>
+      <form id="loginForm">
+        <div class="form-group">
+          <label for="loginUsername">Username</label>
+          <input type="text" id="loginUsername" required>
+        </div>
+        <div class="form-group">
+          <label for="loginPassword">Password</label>
+          <input type="password" id="loginPassword" required>
+        </div>
+        <button type="submit" class="btn">Log in</button>
+      </form>
+      <div class="auth-switch">
+        Don't have an account? <a href="#" onclick="showSignup()">Sign Up</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sign Up Page -->
+  <div id="signupPage" class="auth-container" style="display: none;">
+    <div class="auth-card">
+      <div class="logo">
+        <h1>Create Account</h1>
+        <p>AI-Powered Document Classifer</p>
+      </div>
+      <form id="signupForm">
+        <div class="form-group">
+          <label for="signupUsername">Username</label>
+          <input type="text" id="signupUsername" required>
+        </div>
+        <div class="form-group">
+          <label for="signupEmail">Email</label>
+          <input type="email" id="signupEmail" required>
+        </div>
+        <div class="form-group">
+          <label for="signupRole">Role</label>
+          <select id="signupRole" required>
+            <option value="">Select Role</option>
+            <option value="admin">Admin</option>
+            <option value="hr">HR Manager</option>
+            <option value="finance">Finance Manager</option>
+            <option value="legal">Legal Team</option>
+            <option value="general">General User</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="signupPassword">Password</label>
+          <input type="password" id="signupPassword" required>
+        </div>
+        <div class="form-group">
+          <label for="confirmPassword">Confirm Password</label>
+          <input type="password" id="confirmPassword" required>
+        </div>
+        <button type="submit" class="btn">Create Account</button>
+      </form>
+      <div class="auth-switch">
+        Already have an account? <a href="#" onclick="showLogin()">Log In</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Dashboard -->
+  <div id="dashboard" class="dashboard">
+    <header class="header">
+      <div class="header-content">
+        <h1>Dashboard</h1>
+        <div class="user-info">
+          <div class="user-avatar" id="userAvatar">U</div>
+          <span id="userName">User</span>
+          <button class="logout-btn" onclick="logout()">Logout</button>
+        </div>
+      </div>
+    </header>
+
+    <div class="main-content">
+      <!-- Upload Section -->
+      <div class="upload-section">
+        <h2 style="margin-bottom: 20px;">Upload Documents</h2>
+        <div class="upload-area" id="uploadArea" onclick="document.getElementById('fileInput').click()">
+          <div class="upload-icon">📄</div>
+          <h3>Drag & Drop or Click to Upload</h3>
+          <p>Supports PDF, DOCX, TXT files</p>
+          <input type="file" id="fileInput" class="file-input" accept=".pdf,.docx,.txt" multiple>
+        </div>
+        <div class="progress-bar" id="progressBar" style="display: none;">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+      </div>
+
+      <!-- Search & Filters -->
+      <div class="search-filters">
+        <div class="search-box">
+          <span class="search-icon">🔍</span>
+          <input type="text" id="searchInput" placeholder="Search documents by content or keywords...">
+        </div>
+        <select id="categoryFilter">
+          <option value="">All Categories</option>
+          <option value="finance">Finance</option>
+          <option value="hr">HR</option>
+          <option value="legal">Legal</option>
+          <option value="technical">Technical</option>
+          <option value="contracts">Contracts</option>
+        </select>
+        <select id="authorFilter">
+          <option value="">All Authors</option>
+        </select>
+        <select id="dateFilter">
+          <option value="">All Dates</option>
+          <option value="today">Today</option>
+          <option value="week">This Week</option>
+          <option value="month">This Month</option>
+        </select>
+      </div>
+
+      <!-- Documents Grid -->
+      <div class="documents-grid" id="documentsGrid">
+        <!-- Sample Documents -->
+        <div class="document-card" onclick="showDocumentDetail('1')">
+          <span class="document-type type-finance">Finance</span>
+          <div class="document-title">Q4 Financial Report 2024</div>
+          <div class="document-meta">By: John Smith • Dec 15, 2024</div>
+          <div class="document-summary">
+            This comprehensive financial report covers the fourth quarter performance including revenue growth, expense
+            analysis, and profit margins...
+          </div>
+          <div class="document-actions">
+            <button class="action-btn view-btn">👁️ View</button>
+            <button class="action-btn download-btn">⬇️ Download</button>
+          </div>
+        </div>
+
+        <div class="document-card" onclick="showDocumentDetail('2')">
+          <span class="document-type type-hr">HR</span>
+          <div class="document-title">Employee Handbook 2025</div>
+          <div class="document-meta">By: HR Department • Jan 8, 2025</div>
+          <div class="document-summary">
+            Updated employee policies, benefits information, code of conduct, and workplace guidelines for all staff
+            members...
+          </div>
+          <div class="document-actions">
+            <button class="action-btn view-btn">👁️ View</button>
+            <button class="action-btn download-btn">⬇️ Download</button>
+          </div>
+        </div>
+
+        <div class="document-card" onclick="showDocumentDetail('3')">
+          <span class="document-type type-legal">Legal</span>
+          <div class="document-title">Software License Agreement</div>
+          <div class="document-meta">By: Legal Team • Dec 20, 2024</div>
+          <div class="document-summary">
+            Terms and conditions for software licensing, usage rights, limitations, and compliance requirements...
+          </div>
+          <div class="document-actions">
+            <button class="action-btn view-btn">👁️ View</button>
+            <button class="action-btn download-btn">⬇️ Download</button>
+          </div>
+        </div>
+
+        <div class="document-card" onclick="showDocumentDetail('4')">
+          <span class="document-type type-technical">Technical</span>
+          <div class="document-title">API Documentation v2.1</div>
+          <div class="document-meta">By: Dev Team • Jan 5, 2025</div>
+          <div class="document-summary">
+            Complete API reference guide including endpoints, authentication methods, request/response formats, and code
+            examples...
+          </div>
+          <div class="document-actions">
+            <button class="action-btn view-btn">👁️ View</button>
+            <button class="action-btn download-btn">⬇️ Download</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Document Detail Modal -->
+  <div id="documentModal" class="modal">
+    <div class="modal-content">
+      <button class="modal-close" onclick="closeDocumentModal()">×</button>
+      <div id="documentDetails">
+        <!-- Document details will be populated here -->
+      </div>
+    </div>
+  </div>
+
+  <script src="Front.js">
+  </script>
+</body>
+
+</html>
