@@ -28,6 +28,9 @@ class DocsCRUD():
     def fetch_docs_by_user_id(self, user_uuid: str):
         return self.db.query(models.Document).filter(models.Document.uuid == user_uuid).all()
 
+    def fetch_docs_by_role(self, role: str):
+        return self.db.query(models.Document).filter(models.Document.category == role).all()
+
     def delete_doc(self, doc_id: int):
         doc = self.fetch_doc_by_doc_id(doc_id)
         if doc:

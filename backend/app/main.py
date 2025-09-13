@@ -2,9 +2,10 @@ from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from datetime import timedelta, datetime
-import os, shutil, uuid as uuid_lib
+import os, shutil, faiss, numpy as np
+from sentence_transformers import SentenceTransformer
 
-from app import models, schemas, crud, db
+from app import models, schemas, crud, db, utils, classifier
 from app.encryption_logic import EncryptionHandler
 from app.auth_logic import create_access_token, get_current_user, ACCESS_TOKEN_EXPIRE_MINUTES
 
@@ -20,6 +21,9 @@ encryption = EncryptionHandler()
 UPLOAD_DIR = "uploaded_docs"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+search_model = SentenceTransformer('all-MiniLM-L6-v2')
+documents_index = faiss.IndexFlatL2(384) # 384 is the embedding dimension
+docid_map = {}
 
 def get_user_crud(db: Session = Depends(db.get_db)):
     return crud.UserCRUD(db)
@@ -70,42 +74,54 @@ def login_for_access_token(
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
-
 # -----------------------------
 # Document Upload & Retrieval
 # -----------------------------
 @app.post("/documents/", response_model=schemas.Document)
 def upload_document(
     file: UploadFile = File(...),
-    category: str = Form(...),
-    author: str = Form(None),
-    summary: str = Form(None),
     db: Session = Depends(db.get_db),
     current_user: models.User = Depends(get_current_user),
 ):
+    # 1. Save the file temporarily
     file_path = os.path.join(UPLOAD_DIR, file.filename)
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    # Derive key from user's password + salt for encryption
-    key = encryption.derive_key(current_user.hashed_password, current_user.salt)
-    with open(file_path, "rb") as f:
-        data = f.read()
-    encrypted_data = encryption.encrypt_data(key, data)
+    # 2. Extract content, classify, and summarize
+    try:
+        document_content = utils.extract_text_from_file(file_path)
+        category = classifier.classify_document(document_content)
+        metadata = utils.extract_metadata(document_content)
+        summary = utils.extract_summary(document_content)
 
+    finally:
+        # Clean up the temporary unencrypted file
+        os.remove(file_path)
+    
+    # 3. Encrypt and save the document
+    key = encryption.derive_key(current_user.hashed_password, current_user.salt)
+    encrypted_data = encryption.encrypt_data(key, document_content)
     enc_path = f"{file_path}.enc"
     with open(enc_path, "wb") as f:
         f.write(encrypted_data)
 
+    # 4. Save metadata to DB
     docs_crud = crud.DocsCRUD(db)
-    new_doc = docs_crud.create_doc(
+    new_doc = docs_crud.create_docs(
         uuid=current_user.uuid,
         filename=file.filename,
         filepath=enc_path,
         category=category,
-        author=author or current_user.username,
+        author=metadata["author"] or current_user.username,
         summary=summary
     )
+
+    embedding = search_model.encode(document_content)
+    documents_index.add(np.expand_dims(embedding, axis=0))
+    # Map the new FAISS index ID to the document's ID from the database
+    docid_map[documents_index.ntotal - 1] = new_doc.docid
+
     return new_doc
 
 
@@ -115,7 +131,17 @@ def list_documents(
     current_user: models.User = Depends(get_current_user)
 ):
     docs_crud = crud.DocsCRUD(db)
-    return docs_crud.fetch_docs_by_user(current_user.uuid)
+
+    # Filter documents based on user role
+    if current_user.role.lower() == "admin":
+        # Admins can view all documents
+        return docs_crud.fetch_all_docs()
+    elif current_user.role.lower() in ["hr", "finance", "legal"]:
+        # Specific roles can only see documents in their category
+        return docs_crud.fetch_docs_by_category(current_user.role)
+    else:
+        # General users can only see documents they uploaded
+        return docs_crud.fetch_docs_by_user_id(current_user.uuid)
 
 
 @app.get("/documents/{docid}")
@@ -142,3 +168,49 @@ def get_document(
         "summary": doc.summary,
         "content_preview": decrypted_data[:200].decode(errors="ignore")
     }
+
+# -----------------------------
+# Indexing & Semantic Search
+# -----------------------------
+@app.post("/index-document/{docid}")
+def index_document(docid: int, content: str):
+    """Helper endpoint to index a document. This would be called after a file is uploaded."""
+    embedding = search_model.encode(content)
+    embedding_np = np.expand_dims(embedding, axis=0)
+    documents_index.add(embedding_np)
+    docid_map[documents_index.ntotal - 1] = docid
+    return {"status": "success", "message": f"Document {docid} indexed."}
+
+@app.get("/search/", response_model=list[schemas.Document])
+def semantic_search(
+    query: str, 
+    db: Session = Depends(db.get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    docs_crud = crud.DocsCRUD(db)
+
+    # 1. Get embedding for the query
+    query_embedding = search_model.encode(query)
+    query_embedding_np = np.expand_dims(query_embedding, axis=0)
+    
+    # 2. Search the FAISS index for similar documents
+    k = 10 # Number of results to return
+    distances, indices = documents_index.search(query_embedding_np, k)
+    
+    # 3. Retrieve documents from the database based on search results
+    results = []
+    for index in indices[0]:
+        # Check if index exists in the map and if the user has permission to view it
+        if index in docid_map:
+            doc_id = docid_map[index]
+            doc = docs_crud.fetch_doc_by_doc_id(doc_id)
+            
+            # Apply role-based access control to the search results
+            if doc:
+                user_role = current_user.role.lower()
+                if user_role == "admin" or \
+                   (user_role in ["hr", "finance", "legal"] and doc.category.lower() == user_role) or \
+                   doc.uuid == current_user.uuid:
+                    results.append(doc)
+
+    return results
