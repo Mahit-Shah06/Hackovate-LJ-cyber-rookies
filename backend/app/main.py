@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from datetime import timedelta, datetime
@@ -6,9 +6,13 @@ import os, shutil, faiss, numpy as np
 from sentence_transformers import SentenceTransformer
 
 from app import models, schemas, crud, db, utils, classifier
+from app.crud import LogCRUD, DocsCRUD
 from app.encryption_logic import EncryptionHandler
 from app.auth_logic import create_access_token, get_current_user, ACCESS_TOKEN_EXPIRE_MINUTES
 
+# -----------------------------
+# Initializing values
+# -----------------------------
 # DB tables
 models.Base.metadata.create_all(bind=db.engine)
 
@@ -22,14 +26,30 @@ UPLOAD_DIR = "uploaded_docs"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 search_model = SentenceTransformer('all-MiniLM-L6-v2')
-documents_index = faiss.IndexFlatL2(384) # 384 is the embedding dimension
+documents_index = faiss.IndexFlatL2(384)
 docid_map = {}
+
+FAISS_INDEX_PATH = "faiss.index"
+DOCID_MAP_PATH = "docid_map.npy"
+
+if os.path.exists(FAISS_INDEX_PATH):
+    print("Loading FAISS index from disk...")
+    documents_index = faiss.read_index(FAISS_INDEX_PATH)
+    docid_map = np.load(DOCID_MAP_PATH, allow_pickle=True).item()
+else:
+    print("Creating new FAISS index...")
+    search_model = SentenceTransformer('all-MiniLM-L6-v2')
+    documents_index = faiss.IndexFlatL2(384)
+    docid_map = {}
 
 def get_user_crud(db: Session = Depends(db.get_db)):
     return crud.UserCRUD(db)
 
 def get_docs_crud(db: Session = Depends(db.get_db)):
     return crud.DocsCRUD(db)
+
+def get_log_crud(db: Session = Depends(db.get_db)):
+    return LogCRUD(db)
 
 @app.get("/")
 def root():
@@ -82,7 +102,13 @@ def upload_document(
     file: UploadFile = File(...),
     db: Session = Depends(db.get_db),
     current_user: models.User = Depends(get_current_user),
+    log_crud: LogCRUD = Depends(get_log_crud)
 ):
+    
+    allowed_file_types = ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "text/plain"]
+    if file.content_type not in allowed_file_types:
+        raise HTTPException(status_code=400, detail="Unsupported file type. Please upload a PDF, DOCX, or TXT file.")
+
     # 1. Save the file temporarily
     file_path = os.path.join(UPLOAD_DIR, file.filename)
     with open(file_path, "wb") as buffer:
@@ -93,7 +119,7 @@ def upload_document(
         document_content = utils.extract_text_from_file(file_path)
         category = classifier.classify_document(document_content)
         metadata = utils.extract_metadata(document_content)
-        summary = utils.extract_summary(document_content)
+        summary = utils.extractive_summarization(document_content)
 
     finally:
         # Clean up the temporary unencrypted file
@@ -119,9 +145,12 @@ def upload_document(
 
     embedding = search_model.encode(document_content)
     documents_index.add(np.expand_dims(embedding, axis=0))
-    # Map the new FAISS index ID to the document's ID from the database
     docid_map[documents_index.ntotal - 1] = new_doc.docid
 
+    faiss.write_index(documents_index, FAISS_INDEX_PATH)
+    np.save(DOCID_MAP_PATH, docid_map)
+
+    log_crud.log_action(current_user.uuid, "upload", new_doc.uuid)
     return new_doc
 
 
@@ -138,7 +167,7 @@ def list_documents(
         return docs_crud.fetch_all_docs()
     elif current_user.role.lower() in ["hr", "finance", "legal"]:
         # Specific roles can only see documents in their category
-        return docs_crud.fetch_docs_by_category(current_user.role)
+        return docs_crud.fetch_docs_by_role(current_user.role)
     else:
         # General users can only see documents they uploaded
         return docs_crud.fetch_docs_by_user_id(current_user.uuid)
@@ -148,10 +177,11 @@ def list_documents(
 def get_document(
     docid: int,
     db: Session = Depends(db.get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(get_current_user),
+    log_crud: LogCRUD = Depends(get_log_crud)
 ):
     docs_crud = crud.DocsCRUD(db)
-    doc = docs_crud.fetch_doc_by_id(docid)
+    doc = docs_crud.fetch_doc_by_doc_id(docid)
     if not doc or doc.uuid != current_user.uuid:
         raise HTTPException(status_code=404, detail="Document not found")
 
@@ -159,6 +189,7 @@ def get_document(
     with open(doc.filepath, "rb") as f:
         encrypted_data = f.read()
     decrypted_data = encryption.decrypt_data(key, encrypted_data)
+    log_crud.log_action(current_user.uuid, "view", doc.uuid)
 
     return {
         "docid": doc.docid,
@@ -166,8 +197,24 @@ def get_document(
         "author": doc.author,
         "category": doc.category,
         "summary": doc.summary,
-        "content_preview": decrypted_data[:200].decode(errors="ignore")
+        "content_preview": decrypted_data[:200]
     }
+
+
+@app.get("/logs/", response_model=list[schemas.AccessLog])
+def get_access_logs(
+    db: Session = Depends(db.get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    # Check if the user has the HR or admin role
+    if current_user.role.lower() not in ["hr", "admin"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to view logs"
+        )
+
+    log_crud = crud.LogCRUD(db)
+    return log_crud.fetch_all_logs()
 
 # -----------------------------
 # Indexing & Semantic Search
@@ -185,9 +232,11 @@ def index_document(docid: int, content: str):
 def semantic_search(
     query: str, 
     db: Session = Depends(db.get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(get_current_user),
+    log_crud: LogCRUD = Depends(get_log_crud)
 ):
     docs_crud = crud.DocsCRUD(db)
+    log_crud.log_action(current_user.uuid, "search")
 
     # 1. Get embedding for the query
     query_embedding = search_model.encode(query)

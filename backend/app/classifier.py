@@ -5,7 +5,7 @@ def classify_document(text: str) -> str:
     Classifies a document based on keyword matching.
     """
     text_lower = text.lower()
-    
+
     # Keyword sets for each category
     keywords = {
         "Finance": ["invoice", "financial", "report", "budget", "quarterly", "revenue", "expense", "profit"],

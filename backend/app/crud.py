@@ -58,3 +58,20 @@ class UserCRUD:
 
     def fetch_username(self, username: str):
         return self.db.query(models.User).filter(models.User.username == username).first()
+    
+class LogCRUD:
+    def __init__(self, db: Session):
+        self.db = db
+    
+    def log_action(self, user_uuid: str, action: str, doc_uuid: str = None):
+        log_entry = models.AccessLog(
+            user_uuid=user_uuid,
+            action=action,
+            doc_uuid=doc_uuid
+        )
+        self.db.add(log_entry)
+        self.db.commit()
+        return log_entry
+    
+    def fetch_all_logs(self, skip: int = 0, limit: int = 100):
+        return self.db.query(models.AccessLog).offset(skip).limit(limit).all()

@@ -1,6 +1,7 @@
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+import sqlite3
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///./documents.db"
 
@@ -18,3 +19,12 @@ def get_db():
         yield db
     finally:
         db.close()
+
+def get_all_table_names():
+    conn = sqlite3.connect(SQLALCHEMY_DATABASE_URL.replace("sqlite:///", ""))
+    cursor = conn.cursor()
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+    tables = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    print("Found tables using native sqlite3:", tables)
+    return tables

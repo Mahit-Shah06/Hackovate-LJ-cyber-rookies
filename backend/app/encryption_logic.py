@@ -25,7 +25,7 @@ class EncryptionHandler:
         combined = username.encode('utf-8') + hashed_password + salt
         return hashlib.sha256(combined).hexdigest()
 
-    def derive_key(self, password:str, salt:bytes)->bytes:
+    def derive_key(self, password:bytes, salt:bytes)->bytes:
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
@@ -33,7 +33,7 @@ class EncryptionHandler:
             iterations=self.iterations,
             backend=self.backend
         )
-        return base64.urlsafe_b64encode(kdf.derive(password.encode('utf-8')))
+        return base64.urlsafe_b64encode(kdf.derive(password))
 
     def encrypt_data(self, key:bytes, data:str)->bytes:
         f = Fernet(key)

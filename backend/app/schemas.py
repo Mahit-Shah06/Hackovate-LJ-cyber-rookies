@@ -40,3 +40,13 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     username: str | None = None
+
+class AccessLog(BaseModel):
+    log_id: int
+    user_uuid: str
+    doc_uuid: str | None = None
+    action: str
+    timestamp: datetime
+
+    class Config:
+        from_attributes = True
