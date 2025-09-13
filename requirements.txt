@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+sqlalchemy
+pydantic
+transformers
+torch
+sentence-transformers
+faiss-cpu
+spacy
+PyPDF2
+python-docx
+bcrypt
+jose
