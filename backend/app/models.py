@@ -30,6 +30,6 @@ class AccessLog(Base):
     __tablename__ = "access_logs"
     log_id = Column(Integer, primary_key=True, autoincrement=True)
     user_uuid = Column(String, ForeignKey("users.uuid"), index=True)
-    doc_uuid = Column(String, ForeignKey("documents.uuid"), nullable=True) # docid for a specific document access
+    doc_uuid = Column(Integer, ForeignKey("documents.uuid"), nullable=True) # docid for a specific document access
     action = Column(String)  # 'upload', 'view', 'search'
     timestamp = Column(DateTime, default=datetime.utcnow)
