@@ -1,8 +1,10 @@
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, status
 from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.responses import StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from datetime import timedelta, datetime
-import os, shutil, faiss, numpy as np
+import os, shutil, faiss, numpy as np, io
 from sentence_transformers import SentenceTransformer
 
 from app import models, schemas, crud, db, utils, classifier
@@ -18,6 +20,15 @@ models.Base.metadata.create_all(bind=db.engine)
 
 # FastAPI app
 app = FastAPI(title="AI Document Backend", version="1.0.0")
+
+# Add CORS middleware for frontend connection
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],  # React frontend
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Encryption handler
 encryption = EncryptionHandler()
@@ -53,7 +64,7 @@ def get_log_crud(db: Session = Depends(db.get_db)):
 
 @app.get("/")
 def root():
-    return {"message": "Backend is running"}
+    return {"message": "Backend is running", "version": "1.0.0"}
 
 # -----------------------------
 # User Registration & Login
@@ -94,6 +105,11 @@ def login_for_access_token(
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
+# Add user info endpoint
+@app.get("/users/me", response_model=schemas.User)
+def read_users_me(current_user: models.User = Depends(get_current_user)):
+    return current_user
+
 # -----------------------------
 # Document Upload & Retrieval
 # -----------------------------
@@ -121,9 +137,16 @@ def upload_document(
         metadata = utils.extract_metadata(document_content)
         summary = utils.extractive_summarization(document_content)
 
+    except Exception as e:
+        # Clean up the temporary file if processing fails
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        raise HTTPException(status_code=400, detail=f"Error processing document: {str(e)}")
+
     finally:
         # Clean up the temporary unencrypted file
-        os.remove(file_path)
+        if os.path.exists(file_path):
+            os.remove(file_path)
     
     # 3. Encrypt and save the document
     key = encryption.derive_key(current_user.hashed_password, current_user.salt)
@@ -143,19 +166,26 @@ def upload_document(
         summary=summary
     )
 
-    embedding = search_model.encode(document_content)
-    documents_index.add(np.expand_dims(embedding, axis=0))
-    docid_map[documents_index.ntotal - 1] = new_doc.docid
+    # 5. Index document for search
+    try:
+        embedding = search_model.encode(document_content)
+        documents_index.add(np.expand_dims(embedding, axis=0))
+        docid_map[documents_index.ntotal - 1] = new_doc.docid
 
-    faiss.write_index(documents_index, FAISS_INDEX_PATH)
-    np.save(DOCID_MAP_PATH, docid_map)
+        # Save index to disk
+        faiss.write_index(documents_index, FAISS_INDEX_PATH)
+        np.save(DOCID_MAP_PATH, docid_map)
+    except Exception as e:
+        print(f"Warning: Failed to index document: {str(e)}")
 
-    log_crud.log_action(current_user.uuid, "upload", new_doc.uuid)
+    log_crud.log_action(current_user.uuid, "upload", str(new_doc.docid))
     return new_doc
 
 
 @app.get("/documents/", response_model=list[schemas.Document])
 def list_documents(
+    skip: int = 0,
+    limit: int = 100,
     db: Session = Depends(db.get_db),
     current_user: models.User = Depends(get_current_user)
 ):
@@ -164,10 +194,10 @@ def list_documents(
     # Filter documents based on user role
     if current_user.role.lower() == "admin":
         # Admins can view all documents
-        return docs_crud.fetch_all_docs()
+        return docs_crud.fetch_all_docs(skip=skip, limit=limit)
     elif current_user.role.lower() in ["hr", "finance", "legal"]:
         # Specific roles can only see documents in their category
-        return docs_crud.fetch_docs_by_role(current_user.role)
+        return docs_crud.fetch_docs_by_role(current_user.role.title())
     else:
         # General users can only see documents they uploaded
         return docs_crud.fetch_docs_by_user_id(current_user.uuid)
@@ -182,27 +212,83 @@ def get_document(
 ):
     docs_crud = crud.DocsCRUD(db)
     doc = docs_crud.fetch_doc_by_doc_id(docid)
-    if not doc or doc.uuid != current_user.uuid:
+    
+    if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Check permissions
+    user_role = current_user.role.lower()
+    if not (doc.uuid == current_user.uuid or 
+            user_role == "admin" or 
+            (user_role in ["hr", "finance", "legal"] and doc.category.lower() == user_role)):
+        raise HTTPException(status_code=403, detail="Access denied")
 
-    key = encryption.derive_key(current_user.hashed_password, current_user.salt)
-    with open(doc.filepath, "rb") as f:
-        encrypted_data = f.read()
-    decrypted_data = encryption.decrypt_data(key, encrypted_data)
-    log_crud.log_action(current_user.uuid, "view", doc.uuid)
+    # Decrypt and return document details
+    try:
+        key = encryption.derive_key(current_user.hashed_password, current_user.salt)
+        with open(doc.filepath, "rb") as f:
+            encrypted_data = f.read()
+        decrypted_data = encryption.decrypt_data(key, encrypted_data)
+        
+        log_crud.log_action(current_user.uuid, "view", str(doc.docid))
 
-    return {
-        "docid": doc.docid,
-        "filename": doc.filename,
-        "author": doc.author,
-        "category": doc.category,
-        "summary": doc.summary,
-        "content_preview": decrypted_data[:200]
-    }
+        return {
+            "docid": doc.docid,
+            "filename": doc.filename,
+            "author": doc.author,
+            "category": doc.category,
+            "summary": doc.summary,
+            "upload_date": doc.upload_date,
+            "content_preview": decrypted_data[:500] + "..." if len(decrypted_data) > 500 else decrypted_data
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error accessing document: {str(e)}")
+
+
+@app.get("/documents/{docid}/download")
+def download_document(
+    docid: int,
+    db: Session = Depends(db.get_db),
+    current_user: models.User = Depends(get_current_user),
+    log_crud: LogCRUD = Depends(get_log_crud)
+):
+    docs_crud = crud.DocsCRUD(db)
+    doc = docs_crud.fetch_doc_by_doc_id(docid)
+    
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Check permissions
+    user_role = current_user.role.lower()
+    if not (doc.uuid == current_user.uuid or 
+            user_role == "admin" or 
+            (user_role in ["hr", "finance", "legal"] and doc.category.lower() == user_role)):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    try:
+        key = encryption.derive_key(current_user.hashed_password, current_user.salt)
+        with open(doc.filepath, "rb") as f:
+            encrypted_data = f.read()
+        decrypted_data = encryption.decrypt_data(key, encrypted_data)
+        
+        log_crud.log_action(current_user.uuid, "download", str(doc.docid))
+        
+        # Create file stream
+        file_stream = io.BytesIO(decrypted_data.encode('utf-8'))
+        
+        return StreamingResponse(
+            io.BytesIO(decrypted_data.encode('utf-8')),
+            media_type='application/octet-stream',
+            headers={"Content-Disposition": f"attachment; filename={doc.filename}"}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error downloading document: {str(e)}")
 
 
 @app.get("/logs/", response_model=list[schemas.AccessLog])
 def get_access_logs(
+    skip: int = 0,
+    limit: int = 100,
     db: Session = Depends(db.get_db),
     current_user: models.User = Depends(get_current_user),
 ):
@@ -214,52 +300,72 @@ def get_access_logs(
         )
 
     log_crud = crud.LogCRUD(db)
-    return log_crud.fetch_all_logs()
+    return log_crud.fetch_all_logs(skip=skip, limit=limit)
 
 # -----------------------------
 # Indexing & Semantic Search
 # -----------------------------
-@app.post("/index-document/{docid}")
-def index_document(docid: int, content: str):
-    """Helper endpoint to index a document. This would be called after a file is uploaded."""
-    embedding = search_model.encode(content)
-    embedding_np = np.expand_dims(embedding, axis=0)
-    documents_index.add(embedding_np)
-    docid_map[documents_index.ntotal - 1] = docid
-    return {"status": "success", "message": f"Document {docid} indexed."}
-
 @app.get("/search/", response_model=list[schemas.Document])
 def semantic_search(
     query: str, 
+    limit: int = 10,
     db: Session = Depends(db.get_db),
     current_user: models.User = Depends(get_current_user),
     log_crud: LogCRUD = Depends(get_log_crud)
 ):
+    if not query.strip():
+        raise HTTPException(status_code=400, detail="Search query cannot be empty")
+
     docs_crud = crud.DocsCRUD(db)
     log_crud.log_action(current_user.uuid, "search")
 
-    # 1. Get embedding for the query
-    query_embedding = search_model.encode(query)
-    query_embedding_np = np.expand_dims(query_embedding, axis=0)
-    
-    # 2. Search the FAISS index for similar documents
-    k = 10 # Number of results to return
-    distances, indices = documents_index.search(query_embedding_np, k)
-    
-    # 3. Retrieve documents from the database based on search results
-    results = []
-    for index in indices[0]:
-        # Check if index exists in the map and if the user has permission to view it
-        if index in docid_map:
-            doc_id = docid_map[index]
-            doc = docs_crud.fetch_doc_by_doc_id(doc_id)
+    try:
+        # 1. Get embedding for the query
+        query_embedding = search_model.encode(query)
+        query_embedding_np = np.expand_dims(query_embedding, axis=0)
+        
+        # 2. Search the FAISS index for similar documents
+        if documents_index.ntotal == 0:
+            return []
             
-            # Apply role-based access control to the search results
-            if doc:
-                user_role = current_user.role.lower()
-                if user_role == "admin" or \
-                   (user_role in ["hr", "finance", "legal"] and doc.category.lower() == user_role) or \
-                   doc.uuid == current_user.uuid:
-                    results.append(doc)
+        k = min(limit, documents_index.ntotal)
+        distances, indices = documents_index.search(query_embedding_np, k)
+        
+        # 3. Retrieve documents from the database based on search results
+        results = []
+        for i, index in enumerate(indices[0]):
+            if index == -1:  # FAISS returns -1 for empty results
+                continue
+                
+            # Check if index exists in the map
+            if index in docid_map:
+                doc_id = docid_map[index]
+                doc = docs_crud.fetch_doc_by_doc_id(doc_id)
+                
+                # Apply role-based access control to the search results
+                if doc:
+                    user_role = current_user.role.lower()
+                    if user_role == "admin" or \
+                       (user_role in ["hr", "finance", "legal"] and doc.category.lower() == user_role) or \
+                       doc.uuid == current_user.uuid:
+                        # Add relevance score
+                        doc_dict = schemas.Document.from_orm(doc).dict()
+                        doc_dict["relevance_score"] = float(1.0 / (1.0 + distances[0][i]))  # Convert distance to similarity
+                        results.append(doc_dict)
 
-    return results
+        # Sort by relevance score (highest first)
+        results.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
+        return results
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Search error: {str(e)}")
+
+# Health check endpoint
+@app.get("/health")
+def health_check():
+    return {
+        "status": "healthy",
+        "timestamp": datetime.utcnow(),
+        "indexed_documents": documents_index.ntotal,
+        "total_mappings": len(docid_map)
+    }
