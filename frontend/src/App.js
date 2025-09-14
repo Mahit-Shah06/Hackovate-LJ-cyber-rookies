@@ -37,37 +37,49 @@ const App = () => {
   const [message, setMessage] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
 
-  // A single function to handle all initial data fetching
   const initializeApp = async (authToken) => {
+    console.log("initializeApp called with token:", authToken);
     if (!authToken) {
+      console.log("No token found, logging out.");
       logout();
       return;
     }
     
     try {
       // Fetch user data first to ensure we are authenticated
+      console.log("Fetching user data...");
       const userRes = await fetch(`${API_URL}/users/me`, {
         headers: { Authorization: `Bearer ${authToken}` },
       });
+
       if (userRes.ok) {
         const userData = await userRes.json();
         setUser(userData);
-        // If user data is successful, then fetch documents
+        console.log("User data fetched successfully:", userData);
+        
+        // Fetch documents only if user data is successful
+        console.log("Fetching documents...");
         const docsRes = await fetch(`${API_URL}/documents/`, {
           headers: { Authorization: `Bearer ${authToken}` },
         });
+
         if (docsRes.ok) {
           const docsData = await docsRes.json();
           setDocuments(docsData);
+          console.log("Documents fetched successfully:", docsData);
         } else {
-          throw new Error('Failed to fetch documents.');
+          const errorData = await docsRes.json();
+          console.error('Failed to fetch documents:', errorData.detail);
+          throw new Error(errorData.detail || 'Failed to fetch documents.');
         }
       } else {
-        // If user data fetch fails, log out
-        throw new Error('Failed to fetch user data.');
+        const errorData = await userRes.json();
+        console.error('Failed to fetch user data:', errorData.detail);
+        throw new Error(errorData.detail || 'Failed to fetch user data.');
       }
     } catch (err) {
-      console.error('Initialization error:', err);
+      console.error('Initialization error caught:', err);
+      setError(err.message);
       logout();
     }
   };
@@ -139,7 +151,8 @@ const App = () => {
         setLogs(data);
         setIsLogsModalOpen(true);
       } else {
-        throw new Error('Failed to fetch logs.');
+        const data = await res.json();
+        throw new Error(data.detail || 'Failed to fetch logs.');
       }
     } catch (err) {
       console.error('Failed to fetch logs:', err);
@@ -448,6 +461,11 @@ const App = () => {
                     Relevance: {(doc.relevance_score * 100).toFixed(2)}%
                   </p>
                 )}
+                {doc.summary && (
+                    <p className="text-sm text-gray-400 mt-2">
+                        <span className="font-semibold text-gray-300">Summary:</span> {doc.summary.substring(0, 100)}...
+                    </p>
+                )}
               </div>
               <div className="mt-4 flex space-x-2">
                 <button
@@ -455,7 +473,7 @@ const App = () => {
                   className="flex-grow flex items-center justify-center space-x-1 px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors duration-300"
                 >
                   <Eye size={16} />
-                  <span>View</span>
+                  <span>View Details</span>
                 </button>
                 <button
                   onClick={() => handleDownload(doc.docid)}
