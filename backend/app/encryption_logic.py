@@ -25,7 +25,7 @@ class EncryptionHandler:
         combined = username.encode('utf-8') + hashed_password + salt
         return hashlib.sha256(combined).hexdigest()
 
-    def derive_key(self, password:str, salt:bytes)->bytes:
+    def derive_key(self, hashed_password:bytes, salt:bytes)->bytes:
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
@@ -33,7 +33,7 @@ class EncryptionHandler:
             iterations=self.iterations,
             backend=self.backend
         )
-        return base64.urlsafe_b64encode(kdf.derive(password))
+        return base64.urlsafe_b64encode(kdf.derive(hashed_password))
 
     # Function to encrypt entire file content as binary data
     def encrypt_file(self, key:bytes, data:bytes)->bytes:

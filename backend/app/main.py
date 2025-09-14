@@ -17,32 +17,25 @@ from app.auth_logic import create_access_token, get_current_user, ACCESS_TOKEN_E
 # -----------------------------
 # DB tables
 models.Base.metadata.create_all(bind=db.engine)
-
 # FastAPI app
 app = FastAPI(title="AI Document Backend", version="1.0.0")
-
 # Add CORS middleware for frontend connection
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # React frontend
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 # Encryption handler
 encryption = EncryptionHandler()
-
 UPLOAD_DIR = "uploaded_docs"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
-
 search_model = SentenceTransformer('all-MiniLM-L6-v2')
 documents_index = faiss.IndexFlatL2(384)
 docid_map = {}
-
 FAISS_INDEX_PATH = "faiss.index"
 DOCID_MAP_PATH = "docid_map.npy"
-
 if os.path.exists(FAISS_INDEX_PATH):
     print("Loading FAISS index from disk...")
     documents_index = faiss.read_index(FAISS_INDEX_PATH)
@@ -52,20 +45,15 @@ else:
     search_model = SentenceTransformer('all-MiniLM-L6-v2')
     documents_index = faiss.IndexFlatL2(384)
     docid_map = {}
-
 def get_user_crud(db: Session = Depends(db.get_db)):
     return crud.UserCRUD(db)
-
 def get_docs_crud(db: Session = Depends(db.get_db)):
     return crud.DocsCRUD(db)
-
 def get_log_crud(db: Session = Depends(db.get_db)):
     return LogCRUD(db)
-
 @app.get("/")
 def root():
     return {"message": "Backend is running", "version": "1.0.0"}
-
 # -----------------------------
 # User Registration & Login
 # -----------------------------
@@ -73,7 +61,6 @@ def root():
 def create_user(user_in: schemas.UserCreate, user_crud: crud.UserCRUD = Depends(get_user_crud)):
     if user_crud.fetch_username(user_in.username):
         raise HTTPException(status_code=400, detail="Username already exists")
-
     salt = encryption.gen_salt()
     hashed_pw = encryption.hash_password(user_in.password)
     user_uuid = encryption.gen_uuid(user_in.username, hashed_pw, salt)
@@ -85,7 +72,6 @@ def create_user(user_in: schemas.UserCreate, user_crud: crud.UserCRUD = Depends(
         salt=salt
     )
     return user
-
 @app.post("/token", response_model=schemas.Token)
 def login_for_access_token(
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -94,22 +80,18 @@ def login_for_access_token(
     user = user_crud.fetch_username(form_data.username)
     if not user:
         raise HTTPException(status_code=400, detail="Incorrect username or password")
-
     stored_hash_bytes = user.hashed_password
     if not encryption.verify_password(form_data.password, stored_hash_bytes):
         raise HTTPException(status_code=400, detail="Incorrect username or password")
-
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": user.username}, expires_delta=access_token_expires
     )
     return {"access_token": access_token, "token_type": "bearer"}
-
 # Add user info endpoint
 @app.get("/users/me", response_model=schemas.User)
 def read_users_me(current_user: models.User = Depends(get_current_user)):
     return current_user
-
 # -----------------------------
 # Document Upload & Retrieval
 # -----------------------------
@@ -120,42 +102,26 @@ def upload_document(
     current_user: models.User = Depends(get_current_user),
     log_crud: LogCRUD = Depends(get_log_crud)
 ):
-    
     allowed_file_types = ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "text/plain"]
     if file.content_type not in allowed_file_types:
         raise HTTPException(status_code=400, detail="Unsupported file type. Please upload a PDF, DOCX, or TXT file.")
-
-    # 1. Save the file temporarily
-    file_path = os.path.join(UPLOAD_DIR, file.filename)
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
-    # 2. Extract content, classify, and summarize
+    # 1. Read the file content from the UploadFile object directly
     try:
-        document_content = utils.extract_text_from_file(file_path)
+        file_content = file.file.read()
+        document_content = utils.extract_text_from_file(io.BytesIO(file_content), file.filename)
         category = classifier.classify_document(document_content)
         metadata = utils.extract_metadata(document_content)
         summary = utils.extractive_summarization(document_content)
-
     except Exception as e:
-        # Clean up the temporary file if processing fails
-        if os.path.exists(file_path):
-            os.remove(file_path)
         raise HTTPException(status_code=400, detail=f"Error processing document: {str(e)}")
-
-    finally:
-        # Clean up the temporary unencrypted file
-        if os.path.exists(file_path):
-            os.remove(file_path)
     
-    # 3. Encrypt and save the document
+    # 2. Encrypt and save the document
+    enc_path = os.path.join(UPLOAD_DIR, f"{file.filename}.enc")
     key = encryption.derive_key(current_user.hashed_password, current_user.salt)
-    encrypted_data = encryption.encrypt_data(key, document_content)
-    enc_path = f"{file_path}.enc"
+    encrypted_data = encryption.encrypt_file(key, document_content.encode('utf-8'))
     with open(enc_path, "wb") as f:
         f.write(encrypted_data)
-
-    # 4. Save metadata to DB
+    # 3. Save metadata to DB
     docs_crud = crud.DocsCRUD(db)
     new_doc = docs_crud.create_docs(
         uuid=current_user.uuid,
@@ -165,23 +131,18 @@ def upload_document(
         author=metadata["author"] or current_user.username,
         summary=summary
     )
-
-    # 5. Index document for search
+    # 4. Index document for search
     try:
         embedding = search_model.encode(document_content)
         documents_index.add(np.expand_dims(embedding, axis=0))
         docid_map[documents_index.ntotal - 1] = new_doc.docid
-
         # Save index to disk
         faiss.write_index(documents_index, FAISS_INDEX_PATH)
         np.save(DOCID_MAP_PATH, docid_map)
     except Exception as e:
         print(f"Warning: Failed to index document: {str(e)}")
-
     log_crud.log_action(current_user.uuid, "upload", new_doc.docid)
     return new_doc
-
-
 @app.get("/documents/", response_model=list[schemas.Document])
 def list_documents(
     skip: int = 0,
@@ -190,7 +151,6 @@ def list_documents(
     current_user: models.User = Depends(get_current_user)
 ):
     docs_crud = crud.DocsCRUD(db)
-
     # Filter documents based on user role
     if current_user.role.lower() == "admin":
         # Admins can view all documents
@@ -201,8 +161,6 @@ def list_documents(
     else:
         # General users can only see documents they uploaded
         return docs_crud.fetch_docs_by_user_id(current_user.uuid)
-
-
 @app.get("/documents/{docid}")
 def get_document(
     docid: int,
@@ -212,26 +170,21 @@ def get_document(
 ):
     docs_crud = crud.DocsCRUD(db)
     doc = docs_crud.fetch_doc_by_doc_id(docid)
-    
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-    
     # Check permissions
     user_role = current_user.role.lower()
     if not (doc.uuid == current_user.uuid or 
             user_role == "admin" or 
             (user_role in ["hr", "finance", "legal"] and doc.category.lower() == user_role)):
         raise HTTPException(status_code=403, detail="Access denied")
-
     # Decrypt and return document details
     try:
         key = encryption.derive_key(current_user.hashed_password, current_user.salt)
         with open(doc.filepath, "rb") as f:
             encrypted_data = f.read()
-        decrypted_data = encryption.decrypt_data(key, encrypted_data)
-        
+        decrypted_data = encryption.decrypt_file(key, encrypted_data).decode('utf-8')
         log_crud.log_action(current_user.uuid, "view", doc.docid)
-
         return {
             "docid": doc.docid,
             "filename": doc.filename,
@@ -243,8 +196,6 @@ def get_document(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error accessing document: {str(e)}")
-
-
 @app.get("/documents/{docid}/download")
 def download_document(
     docid: int,
@@ -254,37 +205,29 @@ def download_document(
 ):
     docs_crud = crud.DocsCRUD(db)
     doc = docs_crud.fetch_doc_by_doc_id(docid)
-    
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-    
     # Check permissions
     user_role = current_user.role.lower()
     if not (doc.uuid == current_user.uuid or 
             user_role == "admin" or 
             (user_role in ["hr", "finance", "legal"] and doc.category.lower() == user_role)):
         raise HTTPException(status_code=403, detail="Access denied")
-
     try:
         key = encryption.derive_key(current_user.hashed_password, current_user.salt)
         with open(doc.filepath, "rb") as f:
             encrypted_data = f.read()
-        decrypted_data = encryption.decrypt_data(key, encrypted_data)
-        
+        decrypted_data = encryption.decrypt_file(key, encrypted_data).decode('utf-8')
         log_crud.log_action(current_user.uuid, "download", doc.docid)
-        
         # Create file stream
         file_stream = io.BytesIO(decrypted_data.encode('utf-8'))
-        
         return StreamingResponse(
-            io.BytesIO(decrypted_data.encode('utf-8')),
+            file_stream,
             media_type='application/octet-stream',
             headers={"Content-Disposition": f"attachment; filename={doc.filename}"}
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error downloading document: {str(e)}")
-
-
 @app.get("/logs/", response_model=list[schemas.AccessLog])
 def get_access_logs(
     skip: int = 0,
@@ -298,10 +241,8 @@ def get_access_logs(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to view logs"
         )
-
     log_crud = crud.LogCRUD(db)
     return log_crud.fetch_all_logs(skip=skip, limit=limit)
-
 # -----------------------------
 # Indexing & Semantic Search
 # -----------------------------
@@ -315,10 +256,8 @@ def semantic_search(
 ):
     if not query.strip():
         raise HTTPException(status_code=400, detail="Search query cannot be empty")
-
     docs_crud = crud.DocsCRUD(db)
     log_crud.log_action(current_user.uuid, "search")
-
     try:
         # 1. Get embedding for the query
         query_embedding = search_model.encode(query)
@@ -352,14 +291,11 @@ def semantic_search(
                         doc_dict = schemas.Document.from_orm(doc).dict()
                         doc_dict["relevance_score"] = float(1.0 / (1.0 + distances[0][i]))  # Convert distance to similarity
                         results.append(doc_dict)
-
         # Sort by relevance score (highest first)
         results.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
         return results
-        
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Search error: {str(e)}")
-
 # Health check endpoint
 @app.get("/health")
 def health_check():

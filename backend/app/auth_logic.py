@@ -1,4 +1,3 @@
-# auth.py
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
@@ -6,11 +5,12 @@ from datetime import timedelta, datetime
 from typing import Annotated
 from jose import JWTError, jwt
 import secrets
+import os
 
 from . import models, crud, db, schemas
 from .encryption_logic import EncryptionHandler
 
-SECRET_KEY = secrets.token_urlsafe(32)
+SECRET_KEY = os.environ.get("SECRET_KEY") or secrets.token_urlsafe(32)
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
