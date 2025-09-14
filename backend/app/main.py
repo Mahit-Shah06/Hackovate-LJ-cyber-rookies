@@ -179,7 +179,7 @@ def list_documents(
         documents = docs_crud.fetch_all_docs(skip=skip, limit=limit)
     elif user_role in ["hr", "finance", "legal"]:
         print(f"User is {current_user.role}. Fetching documents in category '{current_user.role.title()}'.")
-        documents = docs_crud.fetch_docs_by_role(current_user.role.title())
+        documents = docs_crud.fetch_docs_by_role(current_user.role.upper())
     else:
         print(f"User is a general user. Fetching documents uploaded by user with UUID '{current_user.uuid}'.")
         documents = docs_crud.fetch_docs_by_user_id(current_user.uuid)
