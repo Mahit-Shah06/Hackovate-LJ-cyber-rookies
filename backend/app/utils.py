@@ -6,6 +6,7 @@ import spacy
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
+import io # Import the io module
 
 try:
     nlp = spacy.load("en_core_web_sm")
@@ -15,24 +16,23 @@ except OSError:
     download("en_core_web_sm")
     nlp = spacy.load("en_core_web_sm")
 
-def extract_text_from_file(file_path: str) -> str:
+# Modified function to extract text from a file object
+def extract_text_from_file(file_obj: io.BytesIO, filename: str) -> str:
     """
-    Extracts text content from a file based on its extension.
+    Extracts text content from a file-like object based on its extension.
     Supports .txt, .pdf, and .docx files.
     """
-    file_extension = file_path.split('.')[-1].lower()
+    file_extension = filename.split('.')[-1].lower()
     text = ""
 
     if file_extension == 'txt':
-        with open(file_path, 'r', encoding='utf-8') as f:
-            text = f.read()
+        text = file_obj.read().decode('utf-8')
     elif file_extension == 'pdf':
-        with open(file_path, 'rb') as f:
-            reader = PyPDF2.PdfReader(f)
-            for page in reader.pages:
-                text += page.extract_text()
+        reader = PyPDF2.PdfReader(file_obj)
+        for page in reader.pages:
+            text += page.extract_text()
     elif file_extension == 'docx':
-        doc = DocxDocument(file_path)
+        doc = DocxDocument(file_obj)
         for paragraph in doc.paragraphs:
             text += paragraph.text + "\n"
     

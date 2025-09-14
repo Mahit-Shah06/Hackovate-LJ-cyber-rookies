@@ -178,7 +178,7 @@ def upload_document(
     except Exception as e:
         print(f"Warning: Failed to index document: {str(e)}")
 
-    log_crud.log_action(current_user.uuid, "upload", str(new_doc.docid))
+    log_crud.log_action(current_user.uuid, "upload", new_doc.docid)
     return new_doc
 
 
@@ -230,7 +230,7 @@ def get_document(
             encrypted_data = f.read()
         decrypted_data = encryption.decrypt_data(key, encrypted_data)
         
-        log_crud.log_action(current_user.uuid, "view", str(doc.docid))
+        log_crud.log_action(current_user.uuid, "view", doc.docid)
 
         return {
             "docid": doc.docid,
@@ -271,7 +271,7 @@ def download_document(
             encrypted_data = f.read()
         decrypted_data = encryption.decrypt_data(key, encrypted_data)
         
-        log_crud.log_action(current_user.uuid, "download", str(doc.docid))
+        log_crud.log_action(current_user.uuid, "download", doc.docid)
         
         # Create file stream
         file_stream = io.BytesIO(decrypted_data.encode('utf-8'))

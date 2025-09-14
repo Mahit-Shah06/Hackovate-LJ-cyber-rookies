@@ -26,7 +26,7 @@ const App = () => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState('HR');
-  const [token, setToken] = useState(localStorage.getItem('token'));
+  const [token, setToken] = useState(localStorage.getItem('token') || sessionStorage.getItem('token'));
   const [user, setUser] = useState(null);
   const [documents, setDocuments] = useState([]);
   const [logs, setLogs] = useState([]);
@@ -35,12 +35,45 @@ const App = () => {
   const [file, setFile] = useState(null);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [rememberMe, setRememberMe] = useState(false);
+
+  // A single function to handle all initial data fetching
+  const initializeApp = async (authToken) => {
+    if (!authToken) {
+      logout();
+      return;
+    }
+    
+    try {
+      // Fetch user data first to ensure we are authenticated
+      const userRes = await fetch(`${API_URL}/users/me`, {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      if (userRes.ok) {
+        const userData = await userRes.json();
+        setUser(userData);
+        // If user data is successful, then fetch documents
+        const docsRes = await fetch(`${API_URL}/documents/`, {
+          headers: { Authorization: `Bearer ${authToken}` },
+        });
+        if (docsRes.ok) {
+          const docsData = await docsRes.json();
+          setDocuments(docsData);
+        } else {
+          throw new Error('Failed to fetch documents.');
+        }
+      } else {
+        // If user data fetch fails, log out
+        throw new Error('Failed to fetch user data.');
+      }
+    } catch (err) {
+      console.error('Initialization error:', err);
+      logout();
+    }
+  };
 
   useEffect(() => {
-    if (token) {
-      fetchUser();
-      fetchDocuments();
-    }
+    initializeApp(token);
   }, [token]);
 
   const handleAuth = async (e) => {
@@ -66,8 +99,13 @@ const App = () => {
         });
         const data = await res.json();
         if (res.ok) {
-          localStorage.setItem('token', data.access_token);
-          setToken(data.access_token);
+          const newToken = data.access_token;
+          if (rememberMe) {
+            localStorage.setItem('token', newToken);
+          } else {
+            sessionStorage.setItem('token', newToken);
+          }
+          setToken(newToken);
         } else {
           setError(data.detail || 'Login failed.');
         }
@@ -88,37 +126,6 @@ const App = () => {
       }
     } catch (err) {
       setError('An unexpected error occurred. Please try again.');
-    }
-  };
-
-  const fetchUser = async () => {
-    try {
-      const res = await fetch(`${API_URL}/users/me`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setUser(data);
-      } else {
-        throw new Error('Failed to fetch user data.');
-      }
-    } catch (err) {
-      console.error(err);
-      logout();
-    }
-  };
-
-  const fetchDocuments = async () => {
-    try {
-      const res = await fetch(`${API_URL}/documents/`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setDocuments(data);
-      }
-    } catch (err) {
-      console.error('Failed to fetch documents:', err);
     }
   };
 
@@ -164,7 +171,8 @@ const App = () => {
         setMessage('Document uploaded successfully!');
         setFile(null);
         setIsUploadModalOpen(false);
-        fetchDocuments(); // Refresh the list
+        // We ensure the document list is refreshed immediately after a successful upload.
+        initializeApp(token);
       } else {
         const data = await res.json();
         setError(data.detail || 'Upload failed.');
@@ -177,7 +185,7 @@ const App = () => {
   const handleSearch = async (e) => {
     e.preventDefault();
     if (!searchTerm) {
-      fetchDocuments();
+      initializeApp(token); // Re-initialize to show all documents
       return;
     }
     try {
@@ -241,6 +249,7 @@ const App = () => {
 
   const logout = () => {
     localStorage.removeItem('token');
+    sessionStorage.removeItem('token');
     setToken(null);
     setUser(null);
     setDocuments([]);
@@ -282,6 +291,20 @@ const App = () => {
                 onChange={(e) => setPassword(e.target.value)}
               />
             </div>
+            {isLogin && (
+              <div className="mb-6 flex items-center">
+                <input
+                  type="checkbox"
+                  id="rememberMe"
+                  checked={rememberMe}
+                  onChange={(e) => setRememberMe(e.target.checked)}
+                  className="w-4 h-4 text-blue-600 bg-gray-700 rounded border-gray-600 focus:ring-blue-500"
+                />
+                <label className="ml-2 text-sm font-semibold text-gray-300" htmlFor="rememberMe">
+                  Remember me
+                </label>
+              </div>
+            )}
             {!isLogin && (
               <div className="mb-6">
                 <label className="block text-gray-300 text-sm font-semibold mb-2" htmlFor="role">
@@ -339,7 +362,7 @@ const App = () => {
         <nav className="space-y-4">
           <button
             onClick={() => {
-              fetchDocuments();
+              initializeApp(token);
               setSearchTerm('');
             }}
             className="w-full flex items-center space-x-3 px-4 py-3 rounded-lg text-gray-300 hover:bg-gray-700 transition-colors duration-300 group"
@@ -518,6 +541,7 @@ const App = () => {
                   id="file"
                   onChange={handleFileChange}
                   className="w-full text-gray-200 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-gray-700 file:text-blue-400 hover:file:bg-gray-600 transition-colors"
+                  accept=".pdf,.docx,.txt"
                 />
               </div>
               <button

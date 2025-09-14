@@ -1,11 +1,12 @@
 from pydantic import BaseModel
 from datetime import datetime
+from typing import Optional # Import Optional
 
 class DocumentBase(BaseModel):
     filename: str
     category: str
-    author: str | None = None
-    summary: str | None = None
+    author: Optional[str] = None
+    summary: Optional[str] = None
 
 class DocumentCreate(DocumentBase):
     filepath: str
@@ -26,7 +27,6 @@ class UserCreate(UserBase):
 
 class User(UserBase):
     uuid: str
-
     class Config:
         from_attributes = True
 
@@ -39,14 +39,13 @@ class Token(BaseModel):
     token_type: str
 
 class TokenData(BaseModel):
-    username: str | None = None
+    username: Optional[str] = None
 
 class AccessLog(BaseModel):
     log_id: int
     user_uuid: str
-    doc_uuid: str | None = None
+    doc_uuid: Optional[int] = None
     action: str
     timestamp: datetime
-
     class Config:
         from_attributes = True

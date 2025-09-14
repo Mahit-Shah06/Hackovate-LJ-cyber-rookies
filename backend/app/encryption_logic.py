@@ -33,12 +33,14 @@ class EncryptionHandler:
             iterations=self.iterations,
             backend=self.backend
         )
-        return base64.urlsafe_b64encode(kdf.derive(password.encode('utf-8')))
+        return base64.urlsafe_b64encode(kdf.derive(password))
 
-    def encrypt_data(self, key:bytes, data:str)->bytes:
+    # Function to encrypt entire file content as binary data
+    def encrypt_file(self, key:bytes, data:bytes)->bytes:
         f = Fernet(key)
-        return f.encrypt(data.encode('utf-8'))
+        return f.encrypt(data)
 
-    def decrypt_data(self, key:bytes, encrypted_data:bytes)->str:
+    # Function to decrypt entire file content as binary data
+    def decrypt_file(self, key:bytes, encrypted_data:bytes)->bytes:
         f = Fernet(key)
-        return f.decrypt(encrypted_data).decode('utf-8')
+        return f.decrypt(encrypted_data)
