@@ -68,7 +68,6 @@ const App = () => {
         if (res.ok) {
           localStorage.setItem('token', data.access_token);
           setToken(data.access_token);
-          fetchUser();
         } else {
           setError(data.detail || 'Login failed.');
         }
